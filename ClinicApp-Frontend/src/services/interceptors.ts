@@ -1,0 +1,90 @@
+import api from './api';
+
+let isRefreshing = false;
+let failedQueue: any[] = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+
+  failedQueue = [];
+};
+
+export const setupInterceptors = () => {
+  // Request Interceptor
+  api.interceptors.request.use(
+    (config) => {
+      const token = localStorage.getItem('@ClinicApp:token');
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    },
+    (error) => Promise.reject(error)
+  );
+
+  // Response Interceptor
+  api.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+      const originalRequest = error.config;
+
+      // Se o erro for 401 (Não autorizado) e não for uma tentativa de refresh
+      if (error.response?.status === 401 && !originalRequest._retry) {
+        if (isRefreshing) {
+          return new Promise((resolve, reject) => {
+            failedQueue.push({ resolve, reject });
+          })
+            .then((token) => {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+              return api(originalRequest);
+            })
+            .catch((err) => Promise.reject(err));
+        }
+
+        originalRequest._retry = true;
+        isRefreshing = true;
+
+        const refreshToken = localStorage.getItem('@ClinicApp:refreshToken');
+
+        if (refreshToken) {
+          try {
+            // Chamada ao endpoint de refresh que implementamos no backend
+            const response = await api.post('/Users/refresh', { refreshToken });
+            const { Token, RefreshToken } = response.data;
+
+            localStorage.setItem('@ClinicApp:token', Token);
+            localStorage.setItem('@ClinicApp:refreshToken', RefreshToken);
+
+            api.defaults.headers.common.Authorization = `Bearer ${Token}`;
+            processQueue(null, Token);
+
+            return api(originalRequest);
+          } catch (refreshError) {
+            processQueue(refreshError, null);
+            localStorage.removeItem('@ClinicApp:token');
+            localStorage.removeItem('@ClinicApp:refreshToken');
+            window.location.href = '/login';
+            return Promise.reject(refreshError);
+          } finally {
+            isRefreshing = false;
+          }
+        }
+      }
+
+      console.error('API Error:', {
+        url: error.config?.url,
+        method: error.config?.method,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+
+      return Promise.reject(error);
+    }
+  );
+};

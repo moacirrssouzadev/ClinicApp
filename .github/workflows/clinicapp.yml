@@ -1,0 +1,87 @@
+name: ClinicApp CI/CD
+
+on:
+  push:
+    branches: [ "main", "development" ]
+  pull_request:
+    branches: [ "main", "development" ]
+
+jobs:
+  backend-ci:
+    name: Backend CI (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ClinicApp-Backend/ClinicApp.sln
+
+      - name: Build
+        run: dotnet build ClinicApp-Backend/ClinicApp.sln --no-restore --configuration Release
+
+      - name: Run Tests
+        run: dotnet test ClinicApp-Backend/ClinicApp.sln --no-build --configuration Release --verbosity normal
+
+  frontend-ci:
+    name: Frontend CI (Node.js)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ClinicApp-Frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ClinicApp-Frontend
+
+      - name: Lint
+        run: npm run lint
+        working-directory: ClinicApp-Frontend
+        continue-on-error: true # Permite que o build continue se houver apenas avisos de lint
+
+      - name: Build
+        run: npm run build
+        working-directory: ClinicApp-Frontend
+
+  docker-build:
+    name: Docker Build Validation
+    needs: [backend-ci, frontend-ci]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      - name: Build Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ClinicApp-Backend
+          file: ./ClinicApp-Backend/src/ClinicApp.Api/Dockerfile
+          push: false
+          tags: clinicapp-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Frontend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ClinicApp-Frontend
+          file: ./ClinicApp-Frontend/Dockerfile
+          push: false
+          tags: clinicapp-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,65 @@
+services:
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: clinicapp-sqlserver
+    environment:
+      MSSQL_SA_PASSWORD: "SqlServer2022!"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Express"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    networks:
+      - clinicapp-network
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "127.0.0.1", "-U", "sa", "-P", "SqlServer2022!", "-Q", "SELECT 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: always
+
+  api:
+    build:
+      context: ./ClinicApp-Backend
+      dockerfile: src/ClinicApp.Api/Dockerfile
+      args:
+        BUILD_CONFIGURATION: Release
+    container_name: clinicapp-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: "http://0.0.0.0:8080"
+      ConnectionStrings__DefaultConnection: "Server=sql-server,1433;Database=ClinicApp;User=sa;Password=SqlServer2022!;TrustServerCertificate=true;"
+      Jwt__SecretKey: "your-super-secret-key-at-least-32-chars-long-abcdefghijklmnop"
+      Jwt__Issuer: "ClinicApp"
+      Jwt__Audience: "ClinicAppUsers"
+    ports:
+      - "5002:8080"
+    depends_on:
+      - sql-server
+    networks:
+      - clinicapp-network
+    volumes:
+      - ./ClinicApp-Backend/src/ClinicApp.Api/logs:/app/logs
+    restart: always
+
+  frontend:
+    build:
+      context: ./ClinicApp-Frontend
+      dockerfile: Dockerfile
+    container_name: clinicapp-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    networks:
+      - clinicapp-network
+    restart: always
+
+volumes:
+  sqlserver-data:
+
+networks:
+  clinicapp-network:
+    driver: bridge
